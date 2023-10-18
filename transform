@@ -1,0 +1,190 @@
+#!/usr/bin/python3
+
+import datetime
+from dataclasses import dataclass, asdict
+import gzip
+import sys
+
+@dataclass
+class AppReading:
+    run_id: int = None
+    app_id: str = None
+    timestamp: datetime.datetime = None
+    energy_use: float = None
+    wifi_send: int = None
+    wifi_recv: int = None
+    cpu_time: float = None
+    ram_use: int = None
+
+a = AppReading()
+expected = AppReading()
+
+# CWD is the run's dir
+a.run_id = int(sys.argv[1])
+SAMPLE_DIR = sys.argv[2] # '1695902983'
+a.app_id = sys.argv[3] #'im.vector.app'
+UID = sys.argv[4] # 'u0a100'
+U_ID = sys.argv[5] # 'u0_a100'
+
+expected.timestamp = datetime.datetime.fromtimestamp(int('1695902983'))
+a.timestamp = datetime.datetime.fromtimestamp(int(SAMPLE_DIR))
+
+
+# 1
+# ...
+# im.vector.app
+# u0a100
+# u0_a100
+
+# 1
+# ...
+# eu.siacs.conversations
+# u0a103
+# u0_a103
+
+def parse_duration(human_duration: str):
+    total = 0.0
+    parts = human_duration.split()
+    for part in parts:
+        if part.endswith('ms'):
+            number = int(part[:-2])
+            total += number * 0.001
+        elif part.endswith('d'):
+            number = int(part[:-1])
+            total += number * 3600 * 24
+        elif part.endswith('h'):
+            number = int(part[:-1])
+            total += number * 3600.0
+        elif part.endswith('m'):
+            number = int(part[:-1])
+            total += number * 60.0
+        elif part.endswith('s'):
+            number = int(part[:-1])
+            total += number * 1.0
+        else:
+            raise Exception(part)
+    return total
+
+# Total cpu time: u=1m 50s 420ms s=28s 50ms p=0mAh
+expected.cpu_time = 1*60 + 50 + 0.42 + 28.050
+
+def parse_xbytes(human_bytes: str):
+    if human_bytes.endswith('KB'):
+        return int(float(human_bytes[:-2]) * 1000)
+    if human_bytes.endswith('MB'):
+        return int(float(human_bytes[:-2]) * 1000 * 1000)
+    if human_bytes.endswith('GB'):
+        return int(float(human_bytes[:-2]) * 1000 * 1000 * 1000)
+
+
+#   Estimated power use (mAh):
+#     Capacity: 3500, Computed drain: 100, actual drain: 175-210
+#     Screen: 89.5
+#     Unaccounted: 74.5 ( )
+#     Uid u0a100: 3.85 ( cpu=3.85 wifi=0.0000789 )
+#     Uid 1000: 3.32 ( cpu=3.32 )
+#     Uid 0: 1.24 ( cpu=1.24 wifi=0.0000791 )
+#     Wifi: 0.959 ( cpu=0.0336 wifi=0.925 )
+expected.energy_use = 3.85 # mAh; need to convert to Joules eventually
+# u0a100:
+#   Wi-Fi network: 51.89KB received, 32.00KB sent (packets 156 received, 156 sent)
+#   Wake lock *job*/im.vector.app/androidx.work.impl.background.systemjob.SystemJobService realtime
+#   Wake lock Icing realtime
+#   Job im.vector.app/androidx.work.impl.background.systemjob.SystemJobService: 2m 6s 486ms realtime (16 times)
+#   Foreground for: 18m 30s 228ms 
+#   Active for: 18m 30s 576ms 
+#   Total cpu time: u=1m 50s 420ms s=28s 50ms p=0mAh
+#   Proc im.vector.app:
+#     CPU: 1m 42s 790ms usr + 25s 930ms krn ; 0ms fg
+#   Apk im.vector.app:
+#     Service androidx.work.impl.background.systemjob.SystemJobService:
+#       Created for: 0ms uptime
+#       Starts: 0, launches: 16
+expected.wifi_send = int(51.89 * 1000) # bytes
+expected.wifi_recv = int(32.00 * 1000) # bytes
+with gzip.open(SAMPLE_DIR + '/batterystats.gz', 'rb') as bs_f:
+    while True:
+        line = bs_f.readline().decode()
+        #print('.', end='')
+        if not line:
+            break
+        if line.startswith('  Estimated power use (mAh):'):
+            break
+    while True:
+        line = bs_f.readline().decode()
+        if not line:
+            break
+        if line == '\r\n':
+            #raise Exception("App power use not found in " + SAMPLE_DIR)
+            break
+        # TODO parametrize uid
+        if line.startswith('    Uid ' + UID + ':') or line.startswith('    UID ' + UID + ':'):
+            #print(line)
+            a.energy_use = float(line.strip().split()[2])
+            #print(a.energy_use)
+            break
+    app_found = a.energy_use is not None
+    while app_found:
+        line = bs_f.readline().decode()
+        if not line:
+            break
+        if line.startswith('  ' + UID + ':'):
+            line = bs_f.readline().decode()
+            if not line:
+                break
+            if line.startswith('    Wi-Fi network: '):
+                #print(line)
+                parts = line.strip().split()
+                recv_str = parts[2]
+                send_str = parts[4]
+                a.wifi_recv = parse_xbytes(recv_str)
+                a.wifi_send = parse_xbytes(send_str)
+
+            while True:
+                line = bs_f.readline().decode()
+                if not line:
+                    break
+                # Total cpu time: u=9s 728ms s=8s 199ms p=0 # Android 6.0
+                # Total cpu time: u=9s 728ms s=8s 199ms     # Android Pixel 7
+                if line.startswith('    Total cpu time: u='):
+                    line = line.strip()
+                    line = line.split(':')[1]
+                    parts = line.split('=')
+                    u = parts[1][:-2]
+                    if len(parts) > 3:
+                        s = parts[2][:-2]
+                    else:
+                        s = parts[2]
+                    a.cpu_time = parse_duration(u) + parse_duration(s)
+                    break
+            break
+
+
+# USER      PID   PPID  VSIZE  RSS  CPU PRIO  NICE  RTPRI SCHED  PCY WCHAN            PC  NAME
+# u0_a100   5899  287   1442504 238596 0  16    -4    0     0     fg  SyS_epoll_ 00000000 S im.vector.app (u:119374, s:36778)
+expected_ram_use = 238596 * 1024 # bytes
+
+try:
+    ps_f = gzip.open(SAMPLE_DIR + '/ps.gz', 'rb')
+    ps_format = 'toolbox'
+except:
+    ps_f = gzip.open(SAMPLE_DIR + '/ps_toybox.gz', 'rb')
+    ps_format = 'toybox'
+finally:
+    while True:
+        line = ps_f.readline().decode()
+        if not line:
+            break
+        if line.startswith(U_ID + ' '):
+            #print(line.strip())
+            # RSS, 5th column
+            a.ram_use = int(line.split()[4]) * 1024
+            #print(a.ram_use)
+            break
+
+#print(a)
+#print(asdict(a))
+
+import json
+# default=str overcomes "TypeError: Object of type datetime is not JSON serializable"
+json.dump(asdict(a), fp=sys.stdout, default=str)

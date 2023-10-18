@@ -1,0 +1,52 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR=$(dirname $(readlink -f $0))
+
+RUN_DIR=$PWD
+RUN_ID=$(basename "$RUN_DIR")
+
+INTERMEDIATE_DATA_DIR=$(mktemp --directory --suffix .messengers_perf)
+echo "Intermediate data left at $INTERMEDIATE_DATA_DIR"
+
+LAST_TIME_IN_DB=$(psql -qtAX -c "select coalesce(max(timestamp), '2023-09-01') from app_readings where run_id=$RUN_ID") # returns like "2023-10-01 20:45:54+01"
+LAST_TIME_IN_DB_WITH_SLACK=$(date --iso-8601=seconds --date="$LAST_TIME_IN_DB + 30 seconds")
+find . -type d  -not -empty  -newermt "$LAST_TIME_IN_DB_WITH_SLACK" | colrm 1 2 | sort > "$INTERMEDIATE_DATA_DIR"/pending_readings.txt
+NUM=$(wc -l < "$INTERMEDIATE_DATA_DIR"/pending_readings.txt)
+echo "New readings: $NUM"
+
+function do_app() {
+	APP_NAME=$1
+	APP_UID=$2
+	APP_U_ID=${APP_UID/u0a/u0_a}
+	echo -e "\n" do_app APP_NAME=$APP_NAME APP_UID=$APP_UID
+
+	JSON_STREAM_FILE="$INTERMEDIATE_DATA_DIR"/$APP_NAME.json.stream
+	for x in $(cat "$INTERMEDIATE_DATA_DIR"/pending_readings.txt) ; do
+		if "$SCRIPT_DIR"/transform "$RUN_ID" $x $APP_NAME $APP_UID $APP_U_ID >> "$JSON_STREAM_FILE"
+		then
+			echo >> "$JSON_STREAM_FILE"
+			echo -n .
+		else
+			echo FAILED: $x >&2
+			break
+		fi
+	done
+}
+
+cat $RUN_DIR/apps.cfg \
+| while read -r APP_AND_PORT; do
+	do_app $APP_AND_PORT # deliberately unquoted to make two parameters
+done
+
+
+echo
+echo Loading...
+
+I=0
+NUM=$(cat "$INTERMEDIATE_DATA_DIR"/*.json.stream | wc -l)
+cat "$INTERMEDIATE_DATA_DIR"/*.json.stream | while read -r; do
+	I=$(( I + 1 ))
+	echo [$I/$NUM] $REPLY
+	echo $REPLY | "$SCRIPT_DIR"/load || true
+done

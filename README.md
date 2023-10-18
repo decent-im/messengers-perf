@@ -56,3 +56,19 @@ So check your terminal from time to time, for example, in the morning and in the
 I will writte this down later.
 For now, once you have established data extraction, please contact me by email at messengers-perf@autkin.net .
 We will set up continuous uploading of your data.
+
+Data which is sent to the database is just a few numbers, not the entirety of dumps on the disk.
+It looks like this:
+
+```
+{
+  "run_id": 5,
+  "app_id": "com.fsck.k9",
+  "timestamp": "2023-10-18 13:23:45",
+  "energy_use": 1.63,
+  "wifi_send": 118990,
+  "wifi_recv": 410350,
+  "cpu_time": 29.895,
+  "ram_use": 72925184
+}
+```

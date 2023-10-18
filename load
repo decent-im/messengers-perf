@@ -1,0 +1,37 @@
+#!/usr/bin/python3
+
+import datetime
+from dataclasses import dataclass, asdict
+import json
+import sys
+
+@dataclass
+class AppReading:
+    run_id: int = None
+    app_id: str = None
+    timestamp: datetime.datetime = None
+    energy_use: float = None
+    wifi_send: int = None
+    wifi_recv: int = None
+    cpu_time: float = None
+    ram_use: int = None
+
+
+app_reading_dict = json.load(sys.stdin)
+
+a = AppReading(**app_reading_dict)
+
+
+import os
+import psycopg2
+import psycopg2.extras
+
+script_dir = os.path.dirname(os.path.realpath(__file__))
+with open(f'{script_dir}/conn_string', 'r') as file:
+    conn_string = file.read()
+
+conn = psycopg2.connect(conn_string)
+cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+cur.execute("PREPARE INS AS INSERT INTO app_readings (run_id, app_id, timestamp, energy_use, wifi_send, wifi_recv, cpu_time, ram_use) VALUES($1, $2, $3, $4, $5, $6, $7, $8)");
+cur.execute("EXECUTE INS (%(run_id)s, %(app_id)s, %(timestamp)s, %(energy_use)s, %(wifi_send)s, %(wifi_recv)s, %(cpu_time)s, %(ram_use)s)", vars=app_reading_dict)
+conn.commit()
