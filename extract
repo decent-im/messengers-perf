@@ -1,0 +1,38 @@
+#!/bin/bash
+set -e
+
+# "adb connect"-able, IP:PORT string
+DEVICE=$1
+[[ -n "$DEVICE" ]]
+
+while true; do
+	adb connect "$DEVICE" | (grep -v 'already connected' || true)
+	if [[ ${PIPESTATUS[0]} != 0 ]]; then
+		echo -n ':'
+	else
+		TIMESTAMP=$(date +%s)
+		mkdir "$TIMESTAMP"
+		pushd "$TIMESTAMP" >/dev/null
+		adb -s "$DEVICE" shell dumpsys batterystats | gzip -9c > batterystats.gz
+		
+		adb -s "$DEVICE" shell ps -t -x -P -p -c 2>/dev/null | gzip -9c > ps.gz
+		if [[ ${PIPESTATUS[0]} == 0 ]]; then
+			true # older android, toolbox; we're good
+		else
+			rm ps.gz
+			# newer androids, toybox
+			adb -s "$DEVICE" shell ps -ATw -o USER:12,TID,PPID,VSZ=VSIZE,RSS,CPU,PRI,NI,RTPRIO,SCHED,PCY,WCHAN:16,ADDR:12=PC,ARGS=CMD | gzip -9c > ps_toybox.gz
+		fi
+		if [[ "$(stat -c '%s' batterystats.gz)" == 20 ]] || [[ "$(stat -c '%s' ps*.gz)" == 20 ]]; then
+			# empty gz has file size 20 bytes
+			rm *.gz
+			popd >/dev/null
+			rmdir "$TIMESTAMP"
+			echo -n '?'
+		else
+			popd >/dev/null
+			echo -n '.'
+		fi
+	fi
+	sleep 1m
+done
