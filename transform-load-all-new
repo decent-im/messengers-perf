@@ -9,7 +9,7 @@ RUN_ID=$(basename "$RUN_DIR")
 INTERMEDIATE_DATA_DIR=$(mktemp --directory --suffix .messengers_perf)
 echo "Intermediate data left at $INTERMEDIATE_DATA_DIR"
 
-LAST_TIME_IN_DB=$(psql -qtAX -c "select coalesce(max(timestamp), '2023-09-01') from app_readings where run_id=$RUN_ID") # returns like "2023-10-01 20:45:54+01"
+LAST_TIME_IN_DB=$(psql --dbname="$(cat $SCRIPT_DIR/conn_string)" -qtAX -c "select coalesce(max(timestamp), '2023-09-01') from app_readings where run_id=$RUN_ID") # returns like "2023-10-01 20:45:54+01"
 LAST_TIME_IN_DB_WITH_SLACK=$(date --iso-8601=seconds --date="$LAST_TIME_IN_DB + 30 seconds")
 find . -type d  -not -empty  -newermt "$LAST_TIME_IN_DB_WITH_SLACK" | colrm 1 2 | sort > "$INTERMEDIATE_DATA_DIR"/pending_readings.txt
 NUM=$(wc -l < "$INTERMEDIATE_DATA_DIR"/pending_readings.txt)
